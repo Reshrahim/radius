@@ -1,0 +1,271 @@
+# Platform Engineering Constitution JSON Schema
+# Validates the YAML frontmatter of Platform-Engineering-Constitution.md
+# Used by: rad init (generation), MCP server (validation), Agent Skill (grounding)
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://radapp.io/schemas/constitution/v1"
+title: Platform Engineering Constitution
+description: |
+  Schema for the structured data in a Platform-Engineering-Constitution.md file.
+  The constitution uses Markdown with YAML frontmatter. This schema validates
+  the frontmatter portion. The Markdown body is human-readable documentation.
+type: object
+required:
+  - organization
+  - version
+  - cloudProviders
+  - computeTargets
+  - iacTooling
+  - moduleCatalog
+
+properties:
+  organization:
+    type: string
+    description: Organization name.
+    minLength: 1
+    maxLength: 256
+
+  version:
+    type: string
+    description: Constitution version (semver).
+    pattern: "^\\d+\\.\\d+\\.\\d+$"
+
+  cloudProviders:
+    type: array
+    description: Configured cloud providers.
+    minItems: 1
+    items:
+      type: object
+      required: [name, region]
+      properties:
+        name:
+          type: string
+          enum: [azure, aws, gcp]
+          description: Cloud provider identifier.
+        subscriptionId:
+          type: string
+          description: Azure subscription ID (required for azure).
+        region:
+          type: string
+          description: Default deployment region.
+        resourceGroup:
+          type: string
+          description: Azure resource group (required for azure).
+        accountId:
+          type: string
+          description: AWS account ID (required for aws).
+      allOf:
+        - if:
+            properties:
+              name:
+                const: azure
+          then:
+            required: [subscriptionId, resourceGroup]
+        - if:
+            properties:
+              name:
+                const: aws
+          then:
+            required: [accountId]
+
+  computeTargets:
+    type: array
+    description: Deployment compute targets.
+    minItems: 1
+    items:
+      type: object
+      required: [type, name]
+      properties:
+        type:
+          type: string
+          enum: [kubernetes, aca, ecs, appservice]
+          description: Compute platform type.
+        name:
+          type: string
+          description: Human-readable target name.
+        context:
+          type: string
+          description: Kubernetes context name (required for kubernetes type).
+        namespace:
+          type: string
+          description: Default namespace.
+      if:
+        properties:
+          type:
+            const: kubernetes
+      then:
+        required: [context]
+
+  iacTooling:
+    type: object
+    description: Preferred IaC tooling configuration.
+    required: [preferred]
+    properties:
+      preferred:
+        type: string
+        enum: [terraform, bicep]
+        description: Preferred IaC language for recipe authoring.
+      terraformVersion:
+        type: string
+        description: Minimum Terraform version.
+        pattern: "^\\d+\\.\\d+(\\.\\d+)?$"
+      bicepVersion:
+        type: string
+        description: Minimum Bicep version.
+        pattern: "^\\d+\\.\\d+(\\.\\d+)?$"
+
+  moduleCatalog:
+    type: object
+    description: Approved IaC module catalog location.
+    required: [type, url]
+    properties:
+      type:
+        type: string
+        enum: [terraform-registry, git, local]
+        description: Catalog source type.
+      url:
+        type: string
+        description: Catalog URL or local path.
+        minLength: 1
+      authMethod:
+        type: string
+        description: Authentication method for private catalogs.
+      namespace:
+        type: string
+        description: Module namespace filter.
+
+  containerRegistry:
+    type: object
+    description: Approved container registry configuration.
+    properties:
+      url:
+        type: string
+        description: Registry URL.
+      authMethod:
+        type: string
+        description: Authentication method.
+
+  namingConvention:
+    type: object
+    description: Resource naming rules.
+    properties:
+      pattern:
+        type: string
+        description: Naming pattern template (e.g., "{org}-{env}-{service}-{type}").
+      maxLength:
+        type: integer
+        description: Maximum resource name length.
+        minimum: 1
+      caseStyle:
+        type: string
+        enum: [kebab-case, camelCase, snake_case, PascalCase]
+        description: Preferred case style.
+
+  labels:
+    type: array
+    description: Required labels/tags for all deployed resources.
+    items:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+          description: Label key.
+        value:
+          type: string
+          description: Fixed label value (if not dynamic).
+        required:
+          type: boolean
+          description: Whether this label is mandatory.
+          default: true
+        description:
+          type: string
+          description: Purpose of this label.
+
+  policies:
+    type: array
+    description: Platform policies (manual or imported).
+    items:
+      type: object
+      required: [name, source, rule, severity]
+      properties:
+        name:
+          type: string
+          description: Unique policy name.
+          minLength: 1
+        source:
+          type: string
+          enum: [manual, azure-policy, aws-config, opa]
+          description: Policy origin.
+        importPath:
+          type: string
+          description: Path/URL for imported policies.
+        rule:
+          type: string
+          description: Policy rule description.
+        severity:
+          type: string
+          enum: [error, warning, info]
+          description: Violation severity.
+        remediation:
+          type: string
+          description: Suggested fix for violations.
+        category:
+          type: string
+          description: Policy category (security, naming, cost, etc.).
+      if:
+        properties:
+          source:
+            enum: [azure-policy, aws-config, opa]
+      then:
+        required: [importPath]
+
+  repositoryPolicies:
+    type: object
+    description: GitHub repository configuration policies.
+    properties:
+      visibility:
+        type: string
+        enum: [public, private, internal]
+        description: Default repository visibility.
+      defaultBranch:
+        type: string
+        description: Default branch name.
+        default: main
+      branchProtection:
+        type: boolean
+        description: Whether to enable branch protection rules.
+        default: true
+      requiredReviewers:
+        type: integer
+        description: Minimum number of PR reviewers.
+        minimum: 0
+        default: 1
+
+  containerImagePolicies:
+    type: object
+    description: Container image build and publish policies.
+    properties:
+      approvedBaseImages:
+        type: array
+        description: List of approved base image patterns.
+        items:
+          type: string
+      taggingPolicy:
+        type: string
+        enum: [git-sha, semver, immutable]
+        description: Image tagging strategy.
+      scanning:
+        type: boolean
+        description: Whether to scan images for vulnerabilities.
+        default: true
+      signing:
+        type: boolean
+        description: Whether to sign images.
+        default: false
+
+  authenticationPreferences:
+    type: array
+    description: Ordered list of preferred authentication methods.
+    items:
+      type: string

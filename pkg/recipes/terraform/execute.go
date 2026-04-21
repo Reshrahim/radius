@@ -312,6 +312,18 @@ func (e *executor) generateConfig(ctx context.Context, tf *tfexec.Terraform, opt
 		if err = tfConfig.AddRecipeContext(ctx, options.EnvRecipe.Name, recipectx); err != nil {
 			return "", err
 		}
+	} else if source.IsDirectModuleSource(options.EnvRecipe.TemplatePath) {
+		// Direct module without a "context" variable: inject well-known context
+		// values (namespace, resource name, etc.) as individual module variables.
+		logger.Info("Injecting context variables into direct module")
+		recipectx, err := recipecontext.New(options.ResourceRecipe, options.EnvConfig)
+		if err != nil {
+			return "", err
+		}
+
+		if err = tfConfig.AddDirectModuleContext(options.EnvRecipe.Name, loadedModule.Parameters, recipectx); err != nil {
+			return "", err
+		}
 	}
 	if loadedModule.ResultOutputExists {
 		if err = tfConfig.AddOutputs(options.EnvRecipe.Name); err != nil {

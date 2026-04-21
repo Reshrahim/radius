@@ -1,0 +1,363 @@
+openapi: "3.1.0"
+info:
+  title: Radius MCP Server Tools
+  version: "1.0.0"
+  description: |
+    MCP (Model Context Protocol) server tools exposed by the Radius MCP server.
+    These tools are invoked by GitHub Copilot during architecture design and
+    artifact generation workflows. The MCP server uses JSON-RPC 2.0 over stdio
+    transport. This contract defines the tool input/output schemas.
+
+    **Transport**: stdio (JSON-RPC 2.0)
+    **Server command**: `rad mcp serve`
+    **Registration**: `.github/copilot/mcp.json`
+
+paths: {}
+
+components:
+  schemas:
+    # ─── Tool: resolve_resource_types ───────────────────────────────
+    ResolveResourceTypesInput:
+      type: object
+      required: [dependencies]
+      properties:
+        dependencies:
+          type: array
+          description: Detected application dependencies to resolve to Radius resource types.
+          items:
+            $ref: "#/components/schemas/DependencyDescriptor"
+        constitutionPath:
+          type: string
+          description: Path to the Platform-Engineering-Constitution.md file. Defaults to repo root.
+          default: "./Platform-Engineering-Constitution.md"
+
+    ResolveResourceTypesOutput:
+      type: object
+      required: [resolutions]
+      properties:
+        resolutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceTypeResolution"
+
+    DependencyDescriptor:
+      type: object
+      required: [name, detectedFrom]
+      properties:
+        name:
+          type: string
+          description: "Dependency name (e.g., 'redis', 'postgresql', 'rabbitmq')."
+        detectedFrom:
+          type: string
+          description: "How the dependency was detected (e.g., 'connection-string', 'import', 'docker-compose')."
+        version:
+          type: string
+          description: "Detected version constraint, if any."
+        context:
+          type: object
+          description: "Additional context about the dependency (e.g., environment variables, ports)."
+          additionalProperties: true
+
+    ResourceTypeResolution:
+      type: object
+      required: [dependency, resourceType, source]
+      properties:
+        dependency:
+          type: string
+          description: "Original dependency name."
+        resourceType:
+          type: string
+          description: "Resolved Radius resource type (e.g., 'Applications.Datastores/redisCaches')."
+        source:
+          type: string
+          enum: [local, community, generated]
+          description: "Where the resource type was resolved from."
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: "Confidence score for the resolution (1.0 = exact match)."
+        schemaPath:
+          type: string
+          description: "Path to the resource type schema file."
+
+    # ─── Tool: search_recipes ───────────────────────────────────────
+    SearchRecipesInput:
+      type: object
+      required: [resourceType]
+      properties:
+        resourceType:
+          type: string
+          description: "Radius resource type to find recipes for."
+        cloudProvider:
+          type: string
+          enum: [azure, aws, gcp]
+          description: "Filter recipes by target cloud provider."
+        iacTooling:
+          type: string
+          enum: [terraform, bicep]
+          description: "Filter recipes by IaC language."
+        catalogUrl:
+          type: string
+          description: "Module catalog URL to search. Defaults to constitution's catalog."
+
+    SearchRecipesOutput:
+      type: object
+      required: [recipes]
+      properties:
+        recipes:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecipeMatch"
+
+    RecipeMatch:
+      type: object
+      required: [name, resourceType, templateKind, modulePath, moduleVersion]
+      properties:
+        name:
+          type: string
+          description: "Recipe name."
+        resourceType:
+          type: string
+          description: "Target Radius resource type."
+        templateKind:
+          type: string
+          enum: [terraform, bicep]
+        modulePath:
+          type: string
+          description: "Module source path or registry URL."
+        moduleVersion:
+          type: string
+          description: "Module version."
+        approved:
+          type: boolean
+          description: "Whether the module is in the constitution's approved catalog."
+        description:
+          type: string
+        secureByDefault:
+          type: boolean
+          description: "Whether the recipe applies secure-by-default settings."
+
+    # ─── Tool: generate_app_definition ──────────────────────────────
+    GenerateAppDefinitionInput:
+      type: object
+      required: [applicationName, graph]
+      properties:
+        applicationName:
+          type: string
+          description: "Name for the Radius application."
+        graph:
+          $ref: "#/components/schemas/ApplicationGraph"
+        constitutionPath:
+          type: string
+          default: "./Platform-Engineering-Constitution.md"
+        outputDir:
+          type: string
+          description: "Output directory for generated artifacts."
+          default: "./radius"
+
+    GenerateAppDefinitionOutput:
+      type: object
+      required: [files, complianceReport]
+      properties:
+        files:
+          type: array
+          description: "List of generated files."
+          items:
+            $ref: "#/components/schemas/GeneratedFile"
+        complianceReport:
+          $ref: "#/components/schemas/ComplianceReport"
+
+    GeneratedFile:
+      type: object
+      required: [path, type]
+      properties:
+        path:
+          type: string
+          description: "Relative file path from repository root."
+        type:
+          type: string
+          enum: [app-definition, resource-type, recipe, environment, graph, workflow]
+          description: "File category."
+        content:
+          type: string
+          description: "File content (for preview, may be truncated)."
+
+    # ─── Tool: validate_constitution ────────────────────────────────
+    ValidateConstitutionInput:
+      type: object
+      properties:
+        constitutionPath:
+          type: string
+          default: "./Platform-Engineering-Constitution.md"
+        artifactsDir:
+          type: string
+          description: "Directory containing artifacts to validate against the constitution."
+          default: "./radius"
+        graph:
+          $ref: "#/components/schemas/ApplicationGraph"
+          description: "Application graph to validate (alternative to artifactsDir)."
+
+    ValidateConstitutionOutput:
+      type: object
+      required: [valid, results, summary]
+      properties:
+        valid:
+          type: boolean
+          description: "Whether all policies pass."
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyResult"
+        summary:
+          type: string
+          description: "Human-readable compliance summary (e.g., '12/12 policies pass')."
+
+    PolicyResult:
+      type: object
+      required: [policyName, status]
+      properties:
+        policyName:
+          type: string
+        status:
+          type: string
+          enum: [pass, fail, warning, skip]
+        resource:
+          type: string
+          description: "Affected resource, if specific."
+        message:
+          type: string
+        remediation:
+          type: string
+
+    # ─── Tool: get_environments ─────────────────────────────────────
+    GetEnvironmentsInput:
+      type: object
+      properties:
+        constitutionPath:
+          type: string
+          default: "./Platform-Engineering-Constitution.md"
+
+    GetEnvironmentsOutput:
+      type: object
+      required: [environments]
+      properties:
+        environments:
+          type: array
+          items:
+            $ref: "#/components/schemas/EnvironmentInfo"
+
+    EnvironmentInfo:
+      type: object
+      required: [name, computeTarget, cloudProvider]
+      properties:
+        name:
+          type: string
+        computeTarget:
+          type: string
+          description: "Compute target type (e.g., 'kubernetes')."
+        cloudProvider:
+          type: string
+          description: "Cloud provider (e.g., 'azure')."
+        namespace:
+          type: string
+        region:
+          type: string
+        status:
+          type: string
+          enum: [configured, available, unavailable]
+
+    # ─── Shared: Application Graph ──────────────────────────────────
+    ApplicationGraph:
+      type: object
+      required: [version, application, nodes, edges]
+      properties:
+        version:
+          type: string
+          description: "Graph schema version."
+          default: "1.0"
+        application:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+        metadata:
+          type: object
+          properties:
+            generatedAt:
+              type: string
+              format: date-time
+            toolVersion:
+              type: string
+
+    GraphNode:
+      type: object
+      required: [id, type, name]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          description: "Radius resource type."
+        name:
+          type: string
+        source:
+          type: string
+          enum: [local, community, generated]
+        recipe:
+          type: string
+        cloudService:
+          type: string
+        module:
+          type: object
+          properties:
+            source:
+              type: string
+            name:
+              type: string
+            version:
+              type: string
+        properties:
+          type: object
+          additionalProperties: true
+
+    GraphEdge:
+      type: object
+      required: [from, to, type]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        type:
+          type: string
+          enum: [connection, dependency, secret]
+        port:
+          type: integer
+
+    # ─── Shared: Compliance Report ──────────────────────────────────
+    ComplianceReport:
+      type: object
+      required: [valid, totalPolicies, passingPolicies, results]
+      properties:
+        valid:
+          type: boolean
+        totalPolicies:
+          type: integer
+        passingPolicies:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyResult"
+        summary:
+          type: string
