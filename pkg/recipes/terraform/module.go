@@ -29,6 +29,7 @@ import (
 	"github.com/radius-project/radius/pkg/components/metrics"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/recipecontext"
+	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config"
 	"github.com/radius-project/radius/pkg/recipes/util"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
@@ -52,6 +53,10 @@ type moduleInspectResult struct {
 
 	// The parameter variables defined by the recipe
 	Parameters map[string]any
+
+	// ModuleOutputs contains information about all outputs declared by the module.
+	// Used for direct module sources to generate individual output blocks.
+	ModuleOutputs []source.ModuleOutputInfo
 
 	// Any other module information required in the future can be added here.
 }
@@ -141,6 +146,14 @@ func inspectModule(workingDir string, recipe *recipes.EnvironmentDefinition) (*m
 	// Check if an output named "result" is defined in the module.
 	if _, ok := mod.Outputs[recipes.ResultPropertyName]; ok {
 		result.ResultOutputExists = true
+	}
+
+	// Collect all module outputs for direct module support.
+	for name, output := range mod.Outputs {
+		result.ModuleOutputs = append(result.ModuleOutputs, source.ModuleOutputInfo{
+			Name:      name,
+			Sensitive: output.Sensitive,
+		})
 	}
 
 	// Extract the list of parameters.

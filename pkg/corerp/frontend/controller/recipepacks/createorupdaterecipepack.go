@@ -25,6 +25,7 @@ import (
 	"github.com/radius-project/radius/pkg/armrpc/rest"
 	"github.com/radius-project/radius/pkg/corerp/datamodel"
 	"github.com/radius-project/radius/pkg/corerp/datamodel/converter"
+	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
 )
 
@@ -64,6 +65,9 @@ func (r *CreateOrUpdateRecipePack) Run(ctx context.Context, w http.ResponseWrite
 		return resp, err
 	}
 
+	// Best-effort validation: classify recipe source types for terraform recipes.
+	validateRecipePackSources(ctx, newResource)
+
 	logger.Info("Creating or updating recipe pack", "resourceID", serviceCtx.ResourceID.String())
 
 	newResource.SetProvisioningState(v1.ProvisioningStateSucceeded)
@@ -73,4 +77,33 @@ func (r *CreateOrUpdateRecipePack) Run(ctx context.Context, w http.ResponseWrite
 	}
 
 	return r.ConstructSyncResponse(ctx, req.Method, newEtag, newResource)
+}
+
+// validateRecipePackSources classifies recipe source types and logs the results.
+// This is best-effort validation — it logs warnings for unknown sources but does
+// not reject the request, since the source may still be valid at deployment time.
+func validateRecipePackSources(ctx context.Context, resource *datamodel.RecipePack) {
+	logger := ucplog.FromContextOrDiscard(ctx)
+	resolver := source.NewResolver()
+
+	for resourceType, recipe := range resource.Properties.Recipes {
+		if recipe == nil || recipe.RecipeKind != "terraform" {
+			continue
+		}
+
+		resolved := resolver.Classify(recipe.RecipeLocation)
+		if resolved.Type == source.SourceTypeUnknown {
+			logger.Info("Recipe source type could not be classified; will attempt to use as-is at deployment time",
+				"resourceType", resourceType,
+				"recipeLocation", recipe.RecipeLocation,
+			)
+		} else {
+			logger.Info("Recipe source classified",
+				"resourceType", resourceType,
+				"recipeLocation", recipe.RecipeLocation,
+				"sourceType", resolved.Type.String(),
+				"isDirect", resolved.IsDirectModule,
+			)
+		}
+	}
 }

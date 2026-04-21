@@ -27,6 +27,7 @@ import (
 
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/recipecontext"
+	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config/backends"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config/providers"
 	"github.com/radius-project/radius/pkg/ucp/ucplog"
@@ -292,6 +293,26 @@ func (cfg *TerraformConfig) AddOutputs(localModuleName string) error {
 			"value":     "${module." + localModuleName + "." + recipes.ResultPropertyName + "}",
 			"sensitive": true, // since secret and non-secret values are combined in the result, mark the entire output sensitive
 		},
+	}
+
+	return nil
+}
+
+// AddAllOutputs adds individual output blocks for every module output, used for
+// direct Terraform modules that don't follow the wrapped recipe convention.
+// Each output references module.<localModuleName>.<outputName> and is marked
+// sensitive if the module declares it as such.
+func (cfg *TerraformConfig) AddAllOutputs(localModuleName string, outputs []source.ModuleOutputInfo) error {
+	if localModuleName == "" {
+		return errors.New("module name cannot be empty")
+	}
+
+	cfg.Output = make(map[string]any, len(outputs))
+	for _, out := range outputs {
+		cfg.Output[out.Name] = map[string]any{
+			"value":     "${module." + localModuleName + "." + out.Name + "}",
+			"sensitive": out.Sensitive,
+		}
 	}
 
 	return nil

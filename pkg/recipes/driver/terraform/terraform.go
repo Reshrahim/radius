@@ -34,6 +34,7 @@ import (
 
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/driver"
+	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/recipes/terraform"
 	recipes_util "github.com/radius-project/radius/pkg/recipes/util"
 	"github.com/radius-project/radius/pkg/sdk"
@@ -189,12 +190,30 @@ func (d *terraformDriver) prepareRecipeResponse(ctx context.Context, definition 
 
 	recipeResponse := &recipes.RecipeOutput{}
 	if tfState.Values != nil && tfState.Values.Outputs != nil {
-		// We populate the recipe response from the 'result' output (if set).
 		moduleOutputs := tfState.Values.Outputs
-		if result, ok := moduleOutputs[recipes.ResultPropertyName].Value.(map[string]any); ok {
-			err := recipeResponse.PrepareRecipeResponse(result)
-			if err != nil {
-				return &recipes.RecipeOutput{}, err
+
+		if result, ok := moduleOutputs[recipes.ResultPropertyName]; ok {
+			// Wrapped recipe: parse the structured "result" output.
+			// This takes priority — if a module has a "result" output, it's treated
+			// as a wrapped recipe regardless of source type.
+			if resultMap, ok := result.Value.(map[string]any); ok {
+				err := recipeResponse.PrepareRecipeResponse(resultMap)
+				if err != nil {
+					return &recipes.RecipeOutput{}, err
+				}
+			}
+		} else if source.IsDirectModuleSource(definition.TemplatePath) {
+			// Direct module without "result" output: map all outputs to
+			// Values/Secrets based on sensitivity.
+			recipeResponse.Values = map[string]any{}
+			recipeResponse.Secrets = map[string]any{}
+			recipeResponse.Resources = []string{}
+			for name, output := range moduleOutputs {
+				if output.Sensitive {
+					recipeResponse.Secrets[name] = output.Value
+				} else {
+					recipeResponse.Values[name] = output.Value
+				}
 			}
 		}
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/radius-project/radius/pkg/components/metrics"
 	"github.com/radius-project/radius/pkg/components/secret/secretprovider"
 	"github.com/radius-project/radius/pkg/recipes/recipecontext"
+	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config/backends"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config/providers"
@@ -314,6 +315,11 @@ func (e *executor) generateConfig(ctx context.Context, tf *tfexec.Terraform, opt
 	}
 	if loadedModule.ResultOutputExists {
 		if err = tfConfig.AddOutputs(options.EnvRecipe.Name); err != nil {
+			return "", err
+		}
+	} else if source.IsDirectModuleSource(options.EnvRecipe.TemplatePath) && len(loadedModule.ModuleOutputs) > 0 {
+		// Direct module without a "result" output: forward all outputs individually.
+		if err = tfConfig.AddAllOutputs(options.EnvRecipe.Name, loadedModule.ModuleOutputs); err != nil {
 			return "", err
 		}
 	}

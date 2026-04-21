@@ -21,6 +21,7 @@ import (
 
 	"github.com/hashicorp/terraform-config-inspect/tfconfig"
 	"github.com/radius-project/radius/pkg/recipes"
+	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config"
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +54,7 @@ func Test_InspectTFModuleConfig(t *testing.T) {
 				},
 				ResultOutputExists: false,
 				Parameters:         map[string]any{},
+				ModuleOutputs:      nil,
 			},
 		},
 		{
@@ -71,6 +73,7 @@ func Test_InspectTFModuleConfig(t *testing.T) {
 				},
 				ResultOutputExists: false,
 				Parameters:         map[string]any{},
+				ModuleOutputs:      nil,
 			},
 		},
 		{
@@ -103,6 +106,9 @@ func Test_InspectTFModuleConfig(t *testing.T) {
 						},
 					},
 				},
+				ModuleOutputs: []source.ModuleOutputInfo{
+					{Name: "result", Sensitive: false},
+				},
 			},
 		},
 		{
@@ -131,6 +137,7 @@ func Test_InspectTFModuleConfig(t *testing.T) {
 				},
 				ResultOutputExists: false,
 				Parameters:         map[string]any{},
+				ModuleOutputs:      nil,
 			},
 		},
 	}
