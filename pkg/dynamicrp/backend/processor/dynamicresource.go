@@ -73,7 +73,7 @@ func (d *DynamicProcessor) Process(ctx context.Context, resource *datamodel.Dyna
 		return err
 	}
 
-	err = addOutputValuestoResourceProperties(ctx, options.UcpClient, resource, computedValues, secretValues)
+	err = addOutputValuestoResourceProperties(ctx, options.UcpClient, resource, computedValues, secretValues, options.RecipeOutput != nil && options.RecipeOutput.DirectModule)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,24 @@ func (d *DynamicProcessor) Process(ctx context.Context, resource *datamodel.Dyna
 
 // addOutputValuestoResourceProperties adds the computed values and secret values to the resource properties.
 // It retrieves the schema of the resource type and filters out the values that are not part of the schema.
-func addOutputValuestoResourceProperties(ctx context.Context, ucpClient *v20231001preview.ClientFactory, resource *datamodel.DynamicResource, computedValues map[string]any, secretValues map[string]rpv1.SecretValueReference) error {
+// For direct module sources (when skipSchemaFilter is true), all outputs are added without schema filtering,
+// except for basic properties (application, environment, status, connections) which are always protected.
+func addOutputValuestoResourceProperties(ctx context.Context, ucpClient *v20231001preview.ClientFactory, resource *datamodel.DynamicResource, computedValues map[string]any, secretValues map[string]rpv1.SecretValueReference, skipSchemaFilter bool) error {
+
+	if skipSchemaFilter {
+		// Direct module: dump all outputs to resource properties, only protecting basic properties.
+		for key, value := range computedValues {
+			if !slices.Contains(resourceutil.BasicProperties, key) {
+				resource.Properties[key] = value
+			}
+		}
+		for key, value := range secretValues {
+			if !slices.Contains(resourceutil.BasicProperties, key) {
+				resource.Properties[key] = value.Value
+			}
+		}
+		return nil
+	}
 
 	ID, err := resources.Parse(resource.ID)
 	if err != nil {

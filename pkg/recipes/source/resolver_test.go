@@ -275,7 +275,7 @@ func TestValidateReachability_Registry(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			err := resolver.validateRegistryReachability(ctx, "test/module/aws", "")
+			err := resolver.validateRegistryReachability(ctx, "test/module/aws")
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -325,7 +325,7 @@ func TestValidateReachability_HTTP(t *testing.T) {
 			resolver := newResolverWithClient(server.Client())
 			ctx := context.Background()
 
-			err := resolver.ValidateReachability(ctx, server.URL+"/module.tar.gz", "")
+			err := resolver.ValidateReachability(ctx, server.URL+"/module.tar.gz")
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -342,15 +342,15 @@ func TestValidateReachability_SkipForUnknownAndOCI(t *testing.T) {
 	ctx := context.Background()
 
 	// Unknown source — no validation
-	err := resolver.ValidateReachability(ctx, "some-random-string", "")
+	err := resolver.ValidateReachability(ctx, "some-random-string")
 	require.NoError(t, err)
 
 	// OCI source — no validation
-	err = resolver.ValidateReachability(ctx, "ghcr.io/radius-project/recipes/mysql:latest", "")
+	err = resolver.ValidateReachability(ctx, "ghcr.io/radius-project/recipes/mysql:latest")
 	require.NoError(t, err)
 
 	// OCI scheme — no validation
-	err = resolver.ValidateReachability(ctx, "oci://registry.example.com/module", "")
+	err = resolver.ValidateReachability(ctx, "oci://registry.example.com/module")
 	require.NoError(t, err)
 }
 
@@ -359,14 +359,14 @@ func TestValidateReachability_SkipForGitS3GCS(t *testing.T) {
 	ctx := context.Background()
 
 	// Git source — skip proactive check
-	err := resolver.ValidateReachability(ctx, "git::https://github.com/org/repo.git", "")
+	err := resolver.ValidateReachability(ctx, "git::https://github.com/org/repo.git")
 	require.NoError(t, err)
 
 	// S3 source — skip proactive check
-	err = resolver.ValidateReachability(ctx, "s3::https://bucket/module.zip", "")
+	err = resolver.ValidateReachability(ctx, "s3::https://bucket/module.zip")
 	require.NoError(t, err)
 
 	// GCS source — skip proactive check
-	err = resolver.ValidateReachability(ctx, "gcs::https://bucket/module.zip", "")
+	err = resolver.ValidateReachability(ctx, "gcs::https://bucket/module.zip")
 	require.NoError(t, err)
 }

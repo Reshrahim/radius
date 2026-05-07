@@ -55,9 +55,12 @@ type RecipeDefinition struct {
 	// RecipeLocation is the URL or path to the recipe source.
 	RecipeLocation string `json:"recipeLocation"`
 
-	// Parameters to pass to the recipe.
-	Parameters map[string]any `json:"parameters,omitempty"`
+	// RecipeParameters to pass to the recipe.
+	RecipeParameters map[string]any `json:"recipeParameters,omitempty"`
 
 	// PlainHTTP connects to the location using HTTP (not-HTTPS).
 	PlainHTTP bool `json:"plainHTTP,omitempty"`
+
+	// Outputs maps resource property names to module output names.
+	Outputs map[string]string `json:"outputs,omitempty"`
 }

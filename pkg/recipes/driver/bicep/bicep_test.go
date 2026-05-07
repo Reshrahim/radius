@@ -315,7 +315,7 @@ func Test_Bicep_PrepareRecipeResponse_Success(t *testing.T) {
 		},
 		PrevState: []string{},
 	}
-	actualResponse, err := d.prepareRecipeResponse(opts.BaseOptions.Definition.TemplatePath, response, resources)
+	actualResponse, err := d.prepareRecipeResponse(opts.BaseOptions.Definition, response, resources)
 	require.NoError(t, err)
 	require.Equal(t, expectedResponse, actualResponse)
 }
@@ -352,7 +352,7 @@ func Test_Bicep_PrepareRecipeResponse_EmptySecret(t *testing.T) {
 		},
 	}
 
-	actualResponse, err := d.prepareRecipeResponse("radiusdev.azurecr.io/recipes/functionaltest/parameters/mongodatabases/azure:1.0", response, resources)
+	actualResponse, err := d.prepareRecipeResponse(recipes.EnvironmentDefinition{TemplatePath: "radiusdev.azurecr.io/recipes/functionaltest/parameters/mongodatabases/azure:1.0"}, response, resources)
 	require.NoError(t, err)
 	require.Equal(t, expectedResponse, actualResponse)
 }
@@ -374,9 +374,112 @@ func Test_Bicep_PrepareRecipeResponse_EmptyResult(t *testing.T) {
 		},
 	}
 
-	actualResponse, err := d.prepareRecipeResponse("radiusdev.azurecr.io/recipes/functionaltest/parameters/mongodatabases/azure:1.0", response, resources)
+	actualResponse, err := d.prepareRecipeResponse(recipes.EnvironmentDefinition{TemplatePath: "radiusdev.azurecr.io/recipes/functionaltest/parameters/mongodatabases/azure:1.0"}, response, resources)
 	require.NoError(t, err)
 	require.Equal(t, expectedResponse, actualResponse)
+}
+
+func Test_Bicep_PrepareRecipeResponse_DirectModule(t *testing.T) {
+	d := &bicepDriver{}
+
+	tests := []struct {
+		desc             string
+		definition       recipes.EnvironmentDefinition
+		outputs          map[string]any
+		resources        []*armresources.ResourceReference
+		expectedResponse *recipes.RecipeOutput
+	}{
+		{
+			desc: "direct module with outputs mapping",
+			definition: recipes.EnvironmentDefinition{
+				TemplatePath: "radiusdev.azurecr.io/recipes/avm/storage:1.0",
+				Outputs: map[string]string{
+					"host": "storageEndpoint",
+					"connectionString": "connStr",
+				},
+			},
+			outputs: map[string]any{
+				"storageEndpoint": map[string]any{"value": "https://mystorage.blob.core.windows.net", "type": "String"},
+				"connStr":         map[string]any{"value": "DefaultEndpointsProtocol=https;AccountName=mystorage", "type": "SecureString"},
+			},
+			resources: []*armresources.ResourceReference{
+				{ID: to.Ptr("/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/mystorage")},
+			},
+			expectedResponse: &recipes.RecipeOutput{
+				Values: map[string]any{
+					"host": "https://mystorage.blob.core.windows.net",
+				},
+				Secrets: map[string]any{
+					"connectionString": "DefaultEndpointsProtocol=https;AccountName=mystorage",
+				},
+				Resources: []string{"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/mystorage"},
+				Status: &rpv1.RecipeStatus{
+					TemplateKind: recipes.TemplateKindBicep,
+					TemplatePath: "radiusdev.azurecr.io/recipes/avm/storage:1.0",
+				},
+			},
+		},
+		{
+			desc: "direct module without outputs mapping passes through all outputs",
+			definition: recipes.EnvironmentDefinition{
+				TemplatePath: "radiusdev.azurecr.io/recipes/avm/redis:2.0",
+			},
+			outputs: map[string]any{
+				"hostname": map[string]any{"value": "myredis.redis.cache.windows.net", "type": "String"},
+				"port":     map[string]any{"value": float64(6380), "type": "Int"},
+				"key":      map[string]any{"value": "abc123", "type": "SecureString"},
+			},
+			resources: nil,
+			expectedResponse: &recipes.RecipeOutput{
+				Values: map[string]any{
+					"hostname": "myredis.redis.cache.windows.net",
+					"port":     float64(6380),
+					"key":      "abc123",
+				},
+				Status: &rpv1.RecipeStatus{
+					TemplateKind: recipes.TemplateKindBicep,
+					TemplatePath: "radiusdev.azurecr.io/recipes/avm/redis:2.0",
+				},
+			},
+		},
+		{
+			desc: "outputs mapping preserves result.resources for GC",
+			definition: recipes.EnvironmentDefinition{
+				TemplatePath: "radiusdev.azurecr.io/recipes/avm/cosmos:1.0",
+				Outputs: map[string]string{
+					"endpoint": "cosmosEndpoint",
+				},
+			},
+			outputs: map[string]any{
+				"cosmosEndpoint": map[string]any{"value": "https://mydb.documents.azure.com:443/", "type": "String"},
+				"result": map[string]any{
+					"value": map[string]any{
+						"resources": []any{"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DocumentDB/databaseAccounts/mydb"},
+					},
+				},
+			},
+			resources: nil,
+			expectedResponse: &recipes.RecipeOutput{
+				Values: map[string]any{
+					"endpoint": "https://mydb.documents.azure.com:443/",
+				},
+				Secrets:   map[string]any{},
+				Resources: []string{"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.DocumentDB/databaseAccounts/mydb"},
+				Status: &rpv1.RecipeStatus{
+					TemplateKind: recipes.TemplateKindBicep,
+					TemplatePath: "radiusdev.azurecr.io/recipes/avm/cosmos:1.0",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			resp, err := d.prepareRecipeResponse(tt.definition, tt.outputs, tt.resources)
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedResponse, resp)
+		})
+	}
 }
 
 func setupDeleteInputs(t *testing.T) (bicepDriver, *processors.MockResourceClient) {

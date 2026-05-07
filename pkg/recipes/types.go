@@ -83,6 +83,9 @@ type EnvironmentDefinition struct {
 	TemplateVersion string
 	// Allows insecure connections to registry without SSL check.
 	PlainHTTP bool
+	// Outputs maps resource schema property names to module output names.
+	// When specified for direct Terraform modules, only mapped outputs flow through.
+	Outputs map[string]string
 }
 
 // ResourceMetadata represents recipe details provided while deploying a portable or a user-defined resource.
@@ -130,6 +133,10 @@ type RecipeOutput struct {
 
 	// Status represents the recipe status at deployment time of resource.
 	Status *rpv1.RecipeStatus
+
+	// DirectModule indicates the output came from a direct Terraform module (not a wrapped recipe).
+	// When true, all outputs are written to resource properties without schema filtering.
+	DirectModule bool
 }
 
 // SecretData represents secrets data and includes secret type and a map of secret keys to their values.
@@ -160,6 +167,9 @@ type RecipeDefinition struct {
 	Parameters map[string]any
 	// PlainHTTP connects to the location using HTTP (not-HTTPS)
 	PlainHTTP bool
+	// Outputs maps resource schema property names to module output names.
+	// When specified, only mapped outputs are used (acts as an allow-list).
+	Outputs map[string]string
 }
 
 // PrepareRecipeOutput populates the recipe output from the recipe deployment output stored in the "result" object.

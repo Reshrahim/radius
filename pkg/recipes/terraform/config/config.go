@@ -26,6 +26,7 @@ import (
 	"os"
 
 	"github.com/radius-project/radius/pkg/recipes"
+	"github.com/radius-project/radius/pkg/recipes/paramresolver"
 	"github.com/radius-project/radius/pkg/recipes/recipecontext"
 	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/recipes/terraform/config/backends"
@@ -318,12 +319,10 @@ func (cfg *TerraformConfig) AddAllOutputs(localModuleName string, outputs []sour
 	return nil
 }
 
-// AddDirectModuleContext injects recipe context values as individual module
-// parameters for direct Terraform modules. Only variables that are declared by
-// the module AND match a known context key are injected. User-supplied
-// parameters (from the RecipePack or resource) take precedence and are not
-// overwritten.
-func (cfg *TerraformConfig) AddDirectModuleContext(moduleName string, moduleVars map[string]any, recipectx *recipecontext.Context) error {
+// ResolveDirectModuleParameters resolves template expressions in module parameter
+// values against the recipe context using the shared paramresolver package.
+// This is the TerraformConfig adapter that delegates to pkg/recipes/paramresolver.
+func (cfg *TerraformConfig) ResolveDirectModuleParameters(moduleName string, recipectx *recipecontext.Context) error {
 	mod, ok := cfg.Module[moduleName]
 	if !ok {
 		return fmt.Errorf("module %q not found in the initialized terraform config", moduleName)
@@ -333,64 +332,21 @@ func (cfg *TerraformConfig) AddDirectModuleContext(moduleName string, moduleVars
 		return nil
 	}
 
-	// Build a flat map of well-known context values that community modules
-	// commonly expect. Only string values are included for safety.
-	contextVals := map[string]string{}
-
-	// Kubernetes runtime
-	if recipectx.Runtime.Kubernetes != nil {
-		if recipectx.Runtime.Kubernetes.Namespace != "" {
-			contextVals["namespace"] = recipectx.Runtime.Kubernetes.Namespace
-		}
-		if recipectx.Runtime.Kubernetes.EnvironmentNamespace != "" {
-			contextVals["environment_namespace"] = recipectx.Runtime.Kubernetes.EnvironmentNamespace
-		}
-	}
-
-	// Resource info
-	if recipectx.Resource.Name != "" {
-		contextVals["name"] = recipectx.Resource.Name
-		contextVals["resource_name"] = recipectx.Resource.Name
-	}
-
-	// Environment and application
-	if recipectx.Environment.Name != "" {
-		contextVals["environment_name"] = recipectx.Environment.Name
-	}
-	if recipectx.Application.Name != "" {
-		contextVals["application_name"] = recipectx.Application.Name
-	}
-
-	// Azure provider
-	if recipectx.Azure != nil {
-		if recipectx.Azure.ResourceGroup.Name != "" {
-			contextVals["resource_group_name"] = recipectx.Azure.ResourceGroup.Name
-		}
-		if recipectx.Azure.Subscription.SubscriptionID != "" {
-			contextVals["subscription_id"] = recipectx.Azure.Subscription.SubscriptionID
-		}
-	}
-
-	// AWS provider
-	if recipectx.AWS != nil {
-		if recipectx.AWS.Region != "" {
-			contextVals["region"] = recipectx.AWS.Region
-		}
-		if recipectx.AWS.Account != "" {
-			contextVals["account_id"] = recipectx.AWS.Account
-		}
-	}
-
-	// Inject only if the module declares the variable AND the user hasn't
-	// already set it via parameters.
-	for varName, value := range contextVals {
-		if _, declared := moduleVars[varName]; !declared {
+	// Extract current parameters (excluding source/version keys)
+	params := make(map[string]any)
+	for key, val := range mod {
+		if key == moduleSourceKey || key == moduleVersionKey {
 			continue
 		}
-		if _, alreadySet := mod[varName]; alreadySet {
-			continue
-		}
-		mod[varName] = value
+		params[key] = val
+	}
+
+	// Resolve using the shared paramresolver
+	resolved := paramresolver.ResolveParameters(params, recipectx)
+
+	// Write resolved values back into the module config
+	for key, val := range resolved {
+		mod[key] = val
 	}
 
 	return nil

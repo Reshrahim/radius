@@ -1028,12 +1028,19 @@
         "flags": 1,
         "description": "URL path to the recipe"
       },
-      "parameters": {
+      "recipeParameters": {
         "type": {
           "$ref": "#/86"
         },
         "flags": 0,
         "description": "Parameters to pass to the recipe"
+      },
+      "outputs": {
+        "type": {
+          "$ref": "#/90"
+        },
+        "flags": 0,
+        "description": "Output mappings from resource property names to module output names."
       }
     }
   },
@@ -1089,5 +1096,29 @@
     "readableScopes": 0,
     "writableScopes": 0,
     "functions": {}
+  },
+  {
+    "$type": "ObjectType",
+    "name": "RecipeDefinitionOutputMappings",
+    "properties": {},
+    "additionalProperties": {
+      "$ref": "#/0"
+    }
+  },
+  {
+    "$type": "ObjectType",
+    "name": "EnvironmentPropertiesOutputMappingsValue",
+    "properties": {},
+    "additionalProperties": {
+      "$ref": "#/0"
+    }
+  },
+  {
+    "$type": "ObjectType",
+    "name": "EnvironmentPropertiesOutputMappings",
+    "properties": {},
+    "additionalProperties": {
+      "$ref": "#/91"
+    }
   }
 ]

@@ -283,8 +283,7 @@ func getRecipeDefinitionFromEnvironmentV20250801(ctx context.Context, environmen
 		// Reconcile parameters from recipe pack and environment-level recipe parameters
 		parameters := reconcileRecipeParameters(recipeDefinition.Parameters, envDatamodel.Properties.RecipeParameters, resource.Type())
 
-		// TODO: For now, we can set "Name" to default as recipe packs don't have named recipes.
-		// We will remove this field from EnvironmentDefinition once we deprecate Applications.Core.
+		// Use outputs from recipe pack definition
 		definition := &recipes.EnvironmentDefinition{
 			Name:         "default",
 			Driver:       recipeDefinition.RecipeKind,
@@ -292,6 +291,7 @@ func getRecipeDefinitionFromEnvironmentV20250801(ctx context.Context, environmen
 			Parameters:   parameters,
 			TemplatePath: recipeDefinition.RecipeLocation,
 			PlainHTTP:    recipeDefinition.PlainHTTP,
+			Outputs:      recipeDefinition.Outputs,
 		}
 		return definition, nil
 	}
@@ -324,11 +324,20 @@ func fetchRecipeDefinition(ctx context.Context, recipePackIDs []string, armOptio
 				if definition.PlainHTTP != nil {
 					plainHTTP = *definition.PlainHTTP
 				}
+				outputs := map[string]string{}
+				if definition.Outputs != nil {
+					for k, v := range definition.Outputs {
+						if v != nil {
+							outputs[k] = *v
+						}
+					}
+				}
 				return &recipes.RecipeDefinition{
 					RecipeKind:     string(*definition.RecipeKind),
 					RecipeLocation: string(*definition.RecipeLocation),
-					Parameters:     definition.Parameters,
+					Parameters:     definition.RecipeParameters,
 					PlainHTTP:      plainHTTP,
+					Outputs:        outputs,
 				}, nil
 			}
 		}
@@ -357,4 +366,19 @@ func reconcileRecipeParameters(recipePackParams map[string]any, envRecipeParams 
 	}
 
 	return parameters
+}
+
+// reconcileOutputs returns the outputs from the recipe pack definition.
+// Environment-level output mappings have been removed; outputs are defined only at the recipe pack level.
+func reconcileOutputs(recipePackOutputs map[string]string) map[string]string {
+	if len(recipePackOutputs) == 0 {
+		return nil
+	}
+
+	mappings := make(map[string]string)
+	for k, v := range recipePackOutputs {
+		mappings[k] = v
+	}
+
+	return mappings
 }

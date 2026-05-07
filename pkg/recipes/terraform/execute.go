@@ -313,15 +313,15 @@ func (e *executor) generateConfig(ctx context.Context, tf *tfexec.Terraform, opt
 			return "", err
 		}
 	} else if source.IsDirectModuleSource(options.EnvRecipe.TemplatePath) {
-		// Direct module without a "context" variable: inject well-known context
-		// values (namespace, resource name, etc.) as individual module variables.
-		logger.Info("Injecting context variables into direct module")
+		// Direct module without a "context" variable: resolve {{context.*}}
+		// template expressions in parameters using the shared paramresolver package.
+		logger.Info("Resolving parameter expressions for direct module")
 		recipectx, err := recipecontext.New(options.ResourceRecipe, options.EnvConfig)
 		if err != nil {
 			return "", err
 		}
 
-		if err = tfConfig.AddDirectModuleContext(options.EnvRecipe.Name, loadedModule.Parameters, recipectx); err != nil {
+		if err = tfConfig.ResolveDirectModuleParameters(options.EnvRecipe.Name, recipectx); err != nil {
 			return "", err
 		}
 	}

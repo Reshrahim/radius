@@ -34,6 +34,7 @@ import (
 
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/driver"
+	"github.com/radius-project/radius/pkg/recipes/outputmapping"
 	"github.com/radius-project/radius/pkg/recipes/source"
 	"github.com/radius-project/radius/pkg/recipes/terraform"
 	recipes_util "github.com/radius-project/radius/pkg/recipes/util"
@@ -178,12 +179,19 @@ func (d *terraformDriver) Delete(ctx context.Context, opts driver.DeleteOptions)
 	return nil
 }
 
-// prepareRecipeResponse populates the recipe response from the module output named "result" and the
-// resources deployed by the Terraform module. The outputs and resources are retrieved from the input Terraform JSON state.
+// prepareRecipeResponse populates the recipe response from the Terraform state.
+//
+// Output resolution precedence (FR-015):
+//  1. If `outputs` mapping is configured on the RecipePack, it takes precedence —
+//     module outputs are mapped to resource type read-only properties via the mapping.
+//  2. If no `outputs` mapping but a `result` output exists, use the wrapped recipe
+//     convention (backward compatibility).
+//  3. If neither, for direct modules pass through all outputs; for wrapped modules
+//     return empty output.
+//
+// Resource tracking: `result.resources` is always parsed when present, regardless
+// of which output path is used, to preserve resource tracking/GC.
 func (d *terraformDriver) prepareRecipeResponse(ctx context.Context, definition recipes.EnvironmentDefinition, tfState *tfjson.State) (*recipes.RecipeOutput, error) {
-	// We need to use reflect.DeepEqual to compare the struct that has a slice with an empty struct.
-	// The reason is that Go does not allow comparison of structs that contain slices.
-	// Please see: https://go.dev/ref/spec#Comparison_operators.
 	if tfState == nil || reflect.DeepEqual(*tfState, tfjson.State{}) {
 		return &recipes.RecipeOutput{}, errors.New("terraform state is empty")
 	}
@@ -191,30 +199,60 @@ func (d *terraformDriver) prepareRecipeResponse(ctx context.Context, definition 
 	recipeResponse := &recipes.RecipeOutput{}
 	if tfState.Values != nil && tfState.Values.Outputs != nil {
 		moduleOutputs := tfState.Values.Outputs
+		hasOutputsMapping := len(definition.Outputs) > 0
+		_, hasResultOutput := moduleOutputs[recipes.ResultPropertyName]
+		isDirectModule := source.IsDirectModuleSource(definition.TemplatePath)
 
-		if result, ok := moduleOutputs[recipes.ResultPropertyName]; ok {
-			// Wrapped recipe: parse the structured "result" output.
-			// This takes priority — if a module has a "result" output, it's treated
-			// as a wrapped recipe regardless of source type.
-			if resultMap, ok := result.Value.(map[string]any); ok {
+		switch {
+		case hasOutputsMapping:
+			// FR-015: outputs mapping takes precedence when configured.
+			// Convert TF state outputs to the outputmapping model.
+			raw := make(map[string]outputmapping.OutputValue, len(moduleOutputs))
+			for name, output := range moduleOutputs {
+				if name == recipes.ResultPropertyName {
+					continue // Don't map the result meta-output itself
+				}
+				raw[name] = outputmapping.OutputValue{
+					Value:     output.Value,
+					Sensitive: output.Sensitive,
+				}
+			}
+			recipeResponse.Values, recipeResponse.Secrets = outputmapping.Apply(raw, definition.Outputs)
+			recipeResponse.DirectModule = true
+
+			// Still extract resources from result if present (backward compat)
+			if hasResultOutput {
+				if resultMap, ok := moduleOutputs[recipes.ResultPropertyName].Value.(map[string]any); ok {
+					if resources, ok := resultMap["resources"].([]any); ok {
+						for _, r := range resources {
+							if s, ok := r.(string); ok {
+								recipeResponse.Resources = append(recipeResponse.Resources, s)
+							}
+						}
+					}
+				}
+			}
+
+		case hasResultOutput:
+			// Wrapped recipe convention — parse the structured result output.
+			if resultMap, ok := moduleOutputs[recipes.ResultPropertyName].Value.(map[string]any); ok {
 				err := recipeResponse.PrepareRecipeResponse(resultMap)
 				if err != nil {
 					return &recipes.RecipeOutput{}, err
 				}
 			}
-		} else if source.IsDirectModuleSource(definition.TemplatePath) {
-			// Direct module without "result" output: map all outputs to
-			// Values/Secrets based on sensitivity.
-			recipeResponse.Values = map[string]any{}
-			recipeResponse.Secrets = map[string]any{}
-			recipeResponse.Resources = []string{}
+
+		case isDirectModule:
+			// Direct module with no outputs mapping and no result — pass through all outputs.
+			raw := make(map[string]outputmapping.OutputValue, len(moduleOutputs))
 			for name, output := range moduleOutputs {
-				if output.Sensitive {
-					recipeResponse.Secrets[name] = output.Value
-				} else {
-					recipeResponse.Values[name] = output.Value
+				raw[name] = outputmapping.OutputValue{
+					Value:     output.Value,
+					Sensitive: output.Sensitive,
 				}
 			}
+			recipeResponse.Values, recipeResponse.Secrets = outputmapping.Apply(raw, nil)
+			recipeResponse.DirectModule = true
 		}
 	}
 

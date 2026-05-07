@@ -35,6 +35,8 @@ import (
 	"github.com/radius-project/radius/pkg/portableresources/processors"
 	"github.com/radius-project/radius/pkg/recipes"
 	"github.com/radius-project/radius/pkg/recipes/driver"
+	"github.com/radius-project/radius/pkg/recipes/outputmapping"
+	"github.com/radius-project/radius/pkg/recipes/paramresolver"
 	"github.com/radius-project/radius/pkg/recipes/recipecontext"
 	recipes_util "github.com/radius-project/radius/pkg/recipes/util"
 	"github.com/radius-project/radius/pkg/rp/util"
@@ -123,10 +125,26 @@ func (d *bicepDriver) Execute(ctx context.Context, opts driver.ExecuteOptions) (
 	//update the recipe context with connected resources properties
 	recipeContext.Resource.Connections = opts.Recipe.ConnectedResourcesProperties
 
-	// get the parameters after resolving the conflict between developer and operator parameters
-	// if the recipe template also has the context parameter defined then add it to the parameter for deployment
+	// Determine if this is a direct module or a wrapped recipe.
+	// A direct module is one where:
+	// - The RecipePack has an outputs mapping configured, OR
+	// - The module doesn't define a "context" parameter (not a wrapped recipe)
 	isContextParameterDefined := hasContextParameter(recipeData)
-	parameters := createRecipeParameters(opts.Recipe.Parameters, opts.Definition.Parameters, isContextParameterDefined, recipeContext)
+	hasOutputsMapping := len(opts.Definition.Outputs) > 0
+	isDirectModule := hasOutputsMapping || !isContextParameterDefined
+
+	var parameters map[string]any
+	if isDirectModule {
+		// Direct module path: resolve {{context.*}} expressions in parameters
+		// using the shared paramresolver, then pass as ARM deployment parameters.
+		logger.Info("Using direct Bicep module path", "hasOutputsMapping", hasOutputsMapping, "hasContext", isContextParameterDefined)
+		merged := paramresolver.ShallowMergeParameters(opts.Definition.Parameters, opts.Recipe.Parameters)
+		resolved := paramresolver.ResolveParameters(merged, recipeContext)
+		parameters = createDirectModuleParameters(resolved)
+	} else {
+		// Wrapped recipe path: inject the context object as a parameter.
+		parameters = createRecipeParameters(opts.Recipe.Parameters, opts.Definition.Parameters, isContextParameterDefined, recipeContext)
+	}
 
 	deploymentName := deploymentPrefix + strconv.FormatInt(time.Now().UnixNano(), 10)
 	deploymentID, err := createDeploymentID(recipeContext.Resource.ID, deploymentName)
@@ -168,7 +186,7 @@ func (d *bicepDriver) Execute(ctx context.Context, opts driver.ExecuteOptions) (
 		return nil, recipes.NewRecipeError(recipes.RecipeDeploymentFailed, fmt.Sprintf("failed to deploy recipe %s of type %s", opts.BaseOptions.Recipe.Name, opts.BaseOptions.Definition.ResourceType), recipes_util.ExecutionError, recipes.GetErrorDetails(err))
 	}
 
-	recipeResponse, err := d.prepareRecipeResponse(opts.BaseOptions.Definition.TemplatePath, resp.Properties.Outputs, resp.Properties.OutputResources)
+	recipeResponse, err := d.prepareRecipeResponse(opts.BaseOptions.Definition, resp.Properties.Outputs, resp.Properties.OutputResources)
 	if err != nil {
 		return nil, recipes.NewRecipeError(recipes.InvalidRecipeOutputs, fmt.Sprintf("failed to read the recipe output %q: %s", recipes.ResultPropertyName, err.Error()), recipes_util.ExecutionError, recipes.GetErrorDetails(err))
 	}
@@ -371,42 +389,109 @@ func newProviderConfig(resourceGroup string, envProviders coredm.Providers) clie
 	return config
 }
 
-// prepareRecipeResponse populates the recipe response from parsing the deployment output 'result' object and the
-// resources created by the template.
-func (d *bicepDriver) prepareRecipeResponse(templatePath string, outputs any, resources []*armresources.ResourceReference) (*recipes.RecipeOutput, error) {
-	// We populate the recipe response from the 'result' output (if set)
-	// and the resources created by the template.
-	//
-	// Note that there are two ways a resource can be returned:
-	// - Implicitly when it is created in the template (it will be in 'resources').
-	// - Explicitly as part of the 'result' output.
-	//
-	// The latter is needed because non-ARM and non-UCP resources are not returned as part of the implicit 'resources'
-	// collection. For us this mostly means Kubernetes resources - the user has to be explicit.
+// createDirectModuleParameters wraps resolved parameters into the ARM deployment parameter format.
+func createDirectModuleParameters(params map[string]any) map[string]any {
+	parameters := map[string]any{}
+	for k, v := range params {
+		parameters[k] = map[string]any{
+			"value": v,
+		}
+	}
+	return parameters
+}
+
+// prepareRecipeResponse populates the recipe response from the deployment outputs and resources.
+//
+// FR-015 precedence:
+//  1. If outputs mapping is configured → use outputmapping.Apply for Values/Secrets
+//  2. Elif 'result' output exists → use wrapped recipe convention (PrepareRecipeResponse)
+//  3. Else (direct module, no mapping) → pass through all outputs as Values
+//
+// result.resources is always extracted for resource tracking regardless of which path is used.
+func (d *bicepDriver) prepareRecipeResponse(definition recipes.EnvironmentDefinition, outputs any, resources []*armresources.ResourceReference) (*recipes.RecipeOutput, error) {
 	recipeResponse := &recipes.RecipeOutput{}
 	out, ok := outputs.(map[string]any)
+
+	hasOutputsMapping := len(definition.Outputs) > 0
+	hasResultOutput := false
+	isDirectModule := hasOutputsMapping || !hasContextParameterInOutputs(out)
+
 	if ok {
-		if result, ok := out[recipes.ResultPropertyName].(map[string]any); ok {
-			if resultValue, ok := result["value"].(map[string]any); ok {
-				err := recipeResponse.PrepareRecipeResponse(resultValue)
-				if err != nil {
-					return &recipes.RecipeOutput{}, err
+		// Always extract result.resources for GC tracking
+		if result, rOk := out[recipes.ResultPropertyName].(map[string]any); rOk {
+			hasResultOutput = true
+			if resultValue, vOk := result["value"].(map[string]any); vOk {
+				if resourcesList, exists := resultValue["resources"]; exists {
+					// Parse resources from result for GC tracking
+					tempOutput := &recipes.RecipeOutput{}
+					_ = tempOutput.PrepareRecipeResponse(map[string]any{"resources": resourcesList})
+					recipeResponse.Resources = append(recipeResponse.Resources, tempOutput.Resources...)
 				}
+			}
+		}
+
+		switch {
+		case hasOutputsMapping:
+			// Highest precedence: outputs mapping configured
+			rawOutputs := make(map[string]outputmapping.OutputValue)
+			for k, v := range out {
+				if outputMap, mOk := v.(map[string]any); mOk {
+					rawOutputs[k] = outputmapping.OutputValue{
+						Value:     outputMap["value"],
+						Sensitive: outputMap["type"] == "SecureString" || outputMap["type"] == "SecureObject",
+					}
+				}
+			}
+			values, secrets := outputmapping.Apply(rawOutputs, definition.Outputs)
+			recipeResponse.Values = values
+			recipeResponse.Secrets = secrets
+
+		case hasResultOutput:
+			// Wrapped recipe convention
+			if result, rOk := out[recipes.ResultPropertyName].(map[string]any); rOk {
+				if resultValue, vOk := result["value"].(map[string]any); vOk {
+					err := recipeResponse.PrepareRecipeResponse(resultValue)
+					if err != nil {
+						return &recipes.RecipeOutput{}, err
+					}
+				}
+			}
+
+		case isDirectModule:
+			// Direct module without outputs mapping: pass through all outputs as values
+			values := make(map[string]any)
+			for k, v := range out {
+				if outputMap, mOk := v.(map[string]any); mOk {
+					values[k] = outputMap["value"]
+				}
+			}
+			if len(values) > 0 {
+				recipeResponse.Values = values
 			}
 		}
 	}
 
 	recipeResponse.Status = &rpv1.RecipeStatus{
 		TemplateKind: recipes.TemplateKindBicep,
-		TemplatePath: templatePath,
+		TemplatePath: definition.TemplatePath,
 	}
 
-	// process the 'resources' created by the template
+	// Process the 'resources' created by the template (ARM output resources)
 	for _, id := range resources {
 		recipeResponse.Resources = append(recipeResponse.Resources, *id.ID)
 	}
 
 	return recipeResponse, nil
+}
+
+// hasContextParameterInOutputs checks if the result output exists which indicates a wrapped recipe.
+// This is used for detection when no outputs mapping is configured.
+func hasContextParameterInOutputs(outputs map[string]any) bool {
+	if outputs == nil {
+		return false
+	}
+	_, ok := outputs[recipes.ResultPropertyName]
+	return ok
 }
 
 // getGCOutputResources [GC stands for Garbage Collection] compares two slices of resource ids and

@@ -67,7 +67,10 @@ model RecipeDefinition {
   recipeLocation: string;
 
   @doc("Parameters to pass to the recipe")
-  parameters?: Record<unknown>;
+  recipeParameters?: Record<unknown>;
+
+  @doc("Output mappings from resource property names to module output names. Keys are resource property names, values are module output names.")
+  outputs?: Record<string>;
 }
 
 @doc("The type of recipe")

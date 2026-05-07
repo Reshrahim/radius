@@ -179,7 +179,7 @@ func looksLikeOCIReference(path string) bool {
 
 // ValidateReachability performs a lightweight network check to verify
 // that the module source is accessible.
-func (r *defaultResolver) ValidateReachability(ctx context.Context, templatePath string, templateVersion string) error {
+func (r *defaultResolver) ValidateReachability(ctx context.Context, templatePath string) error {
 	logger := ucplog.FromContextOrDiscard(ctx)
 
 	resolved := r.Classify(templatePath)
@@ -195,15 +195,12 @@ func (r *defaultResolver) ValidateReachability(ctx context.Context, templatePath
 	var err error
 	switch resolved.Type {
 	case SourceTypeTerraformRegistry:
-		err = r.validateRegistryReachability(ctx, templatePath, templateVersion)
+		err = r.validateRegistryReachability(ctx, templatePath)
 	case SourceTypeHTTP:
 		err = r.validateHTTPReachability(ctx, templatePath)
 	case SourceTypeGit, SourceTypeS3, SourceTypeGCS:
 		// For Git/S3/GCS, we skip proactive validation — these sources
-		// will be validated at terraform init time. The lightweight
-		// probes for these source types are complex (git ls-remote requires
-		// git binary, S3/GCS require cloud SDK) and not worth the
-		// complexity for a best-effort check.
+		// will be validated at terraform init time.
 		logger.Info("Skipping proactive reachability check for source type", "sourceType", resolved.Type, "templatePath", templatePath)
 		return nil
 	}
@@ -221,12 +218,9 @@ func (r *defaultResolver) ValidateReachability(ctx context.Context, templatePath
 }
 
 // validateRegistryReachability checks if a Terraform registry module exists.
-func (r *defaultResolver) validateRegistryReachability(ctx context.Context, templatePath string, templateVersion string) error {
+func (r *defaultResolver) validateRegistryReachability(ctx context.Context, templatePath string) error {
 	baseURL := r.registryURL
 	url := fmt.Sprintf("%s/%s", baseURL, templatePath)
-	if templateVersion != "" {
-		url = fmt.Sprintf("%s/%s", url, templateVersion)
-	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

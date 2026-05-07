@@ -783,6 +783,152 @@ func Test_Terraform_PrepareRecipeResponse(t *testing.T) {
 	}
 }
 
+func Test_Terraform_PrepareRecipeResponse_DirectModule(t *testing.T) {
+	d := &terraformDriver{}
+
+	tests := []struct {
+		desc             string
+		definition       recipes.EnvironmentDefinition
+		state            *tfjson.State
+		expectedResponse *recipes.RecipeOutput
+	}{
+		{
+			desc: "direct module with outputs mapping",
+			definition: recipes.EnvironmentDefinition{
+				TemplatePath:    "git::https://github.com/org/vpc-module.git",
+				TemplateVersion: "3.0",
+				Outputs: map[string]string{
+					"host": "endpoint_address",
+					"port": "endpoint_port",
+				},
+			},
+			state: &tfjson.State{
+				Values: &tfjson.StateValues{
+					Outputs: map[string]*tfjson.StateOutput{
+						"endpoint_address": {Value: "myhost.example.com", Sensitive: false},
+						"endpoint_port":    {Value: json.Number("5432"), Sensitive: false},
+						"admin_password":   {Value: "secret123", Sensitive: true},
+					},
+					RootModule: &tfjson.StateModule{},
+				},
+			},
+			expectedResponse: &recipes.RecipeOutput{
+				DirectModule: true,
+				Values: map[string]any{
+					"host": "myhost.example.com",
+					"port": json.Number("5432"),
+				},
+				Secrets: map[string]any{},
+				Status: &rpv1.RecipeStatus{
+					TemplateKind:    recipes.TemplateKindTerraform,
+					TemplatePath:    "git::https://github.com/org/vpc-module.git",
+					TemplateVersion: "3.0",
+				},
+			},
+		},
+		{
+			desc: "direct module with outputs mapping routes sensitive to secrets",
+			definition: recipes.EnvironmentDefinition{
+				TemplatePath: "git::https://github.com/org/db-module.git",
+				Outputs: map[string]string{
+					"connectionString": "conn_str",
+				},
+			},
+			state: &tfjson.State{
+				Values: &tfjson.StateValues{
+					Outputs: map[string]*tfjson.StateOutput{
+						"conn_str": {Value: "postgres://user:pass@host/db", Sensitive: true},
+					},
+					RootModule: &tfjson.StateModule{},
+				},
+			},
+			expectedResponse: &recipes.RecipeOutput{
+				DirectModule: true,
+				Secrets: map[string]any{
+					"connectionString": "postgres://user:pass@host/db",
+				},
+				Values: map[string]any{},
+				Status: &rpv1.RecipeStatus{
+					TemplateKind: recipes.TemplateKindTerraform,
+					TemplatePath: "git::https://github.com/org/db-module.git",
+				},
+			},
+		},
+		{
+			desc: "direct module without outputs mapping passes through all outputs",
+			definition: recipes.EnvironmentDefinition{
+				TemplatePath: "git::https://github.com/org/simple-module.git",
+			},
+			state: &tfjson.State{
+				Values: &tfjson.StateValues{
+					Outputs: map[string]*tfjson.StateOutput{
+						"host": {Value: "myhost", Sensitive: false},
+						"port": {Value: json.Number("3306"), Sensitive: false},
+						"pass": {Value: "secret", Sensitive: true},
+					},
+					RootModule: &tfjson.StateModule{},
+				},
+			},
+			expectedResponse: &recipes.RecipeOutput{
+				DirectModule: true,
+				Values: map[string]any{
+					"host": "myhost",
+					"port": json.Number("3306"),
+				},
+				Secrets: map[string]any{
+					"pass": "secret",
+				},
+				Status: &rpv1.RecipeStatus{
+					TemplateKind: recipes.TemplateKindTerraform,
+					TemplatePath: "git::https://github.com/org/simple-module.git",
+				},
+			},
+		},
+		{
+			desc: "outputs mapping preserves result.resources for GC",
+			definition: recipes.EnvironmentDefinition{
+				TemplatePath: "git::https://github.com/org/module.git",
+				Outputs: map[string]string{
+					"host": "hostname",
+				},
+			},
+			state: &tfjson.State{
+				Values: &tfjson.StateValues{
+					Outputs: map[string]*tfjson.StateOutput{
+						"hostname": {Value: "db.example.com", Sensitive: false},
+						recipes.ResultPropertyName: {
+							Value: map[string]any{
+								"resources": []any{"/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Cache/redis/myredis"},
+							},
+						},
+					},
+					RootModule: &tfjson.StateModule{},
+				},
+			},
+			expectedResponse: &recipes.RecipeOutput{
+				DirectModule: true,
+				Values: map[string]any{
+					"host": "db.example.com",
+				},
+				Secrets:   map[string]any{},
+				Resources: []string{"/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Cache/redis/myredis"},
+				Status: &rpv1.RecipeStatus{
+					TemplateKind: recipes.TemplateKindTerraform,
+					TemplatePath: "git::https://github.com/org/module.git",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			recipeResponse, err := d.prepareRecipeResponse(context.Background(), tt.definition, tt.state)
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedResponse, recipeResponse)
+		})
+	}
+}
+
 func Test_FindSecretIDs(t *testing.T) {
 	ctx := context.TODO()
 	definition := recipes.EnvironmentDefinition{TemplatePath: "git::https://dev.azure.com/project/module"}

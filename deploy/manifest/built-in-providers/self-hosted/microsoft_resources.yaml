@@ -9,5 +9,7 @@ types:
         schema: {}
       "2022-09-01":
         schema: {}
+      "2024-03-01":
+        schema: {}
       "2025-04-01":
         schema: {}     
